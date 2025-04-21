@@ -139,7 +139,7 @@ kind: Pod
 metadata:
   name: giropops
   labels:
-    run: meu-nginx
+    run: giropops
 spec:
   containers:
   - name: girus
@@ -164,7 +164,7 @@ spec:
     resources: 
       limits:
         memory: "128Mi"
-        cpu: "1" 
+        cpu: "0.8" 
       requests: 
         memory: "64Mi" 
         cpu: "0.3"
