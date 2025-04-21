@@ -1,0 +1,38 @@
+apiVersion: v1 
+kind: Pod
+metadata:
+  name: giropops
+  labels:
+    run: meu-nginx
+spec:
+  containers:
+  - name: girus
+    image: nginx 
+    ports:
+    - containerPort: 80 
+    resources: 
+      limits:
+        memory: "128Mi"
+        cpu: "0.5" 
+      requests: 
+        memory: "64Mi" 
+        cpu: "0.3"
+  - name: strigus
+    image: ubuntu
+    args:
+    - sleep
+    - infinity
+    volumeMounts: 
+    - name: primeiro-emptydir 
+      mountPath: /giropops 
+    resources: 
+      limits:
+        memory: "128Mi"
+        cpu: "1" 
+      requests: 
+        memory: "64Mi" 
+        cpu: "0.3"
+  volumes:
+    - name: primeiro-emptydir
+      emptyDir:
+        sizeLimit: 256Mi 
