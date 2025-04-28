@@ -57,7 +57,7 @@ kind create cluster --name kind-multinodes --config $HOME/kind-3nodes.yaml
 Também é possível criar pods com arquivo yaml:
 
 ```bash
-kubectl run meu-nginx --image nginx --port 80 --dry-run=client -o yaml > pod1-template.yaml #simula a criação de um pod e salva as espicificações do pod em um arquivo yaml
+kubectl run meu-nginx --image nginx --port 80 --dry-run=client -o yaml > pod1-template.yaml #simula a criação de um pod e salva as especificações do pod em um arquivo yaml
 
 kubectl apply -f pod-template.yaml #cria o pod com a partir do arquivo yaml
 
@@ -175,3 +175,137 @@ spec:
 ```
 
 Requests é referente aos recursos garantidos ao container e o limits é a quantidade máxima de recurso que o container irá usar.
+
+## Deployments
+
+O deployment permite:
+
+- Controlar o número desejado de Pods
+de uma aplicação. Ele garante que a quantidade correta de instâncias da aplicação esteja sempre em execução.
+
+- Atualizar aplicaçoẽs de forma fácil e segura, empregando estrategias como "rolling" (em que algumas instâncias são atualizadas de cada vez), minimizando o tempo de inatividade.
+
+- Escalonamento: Ele permite aumentar ou diminuir o número de Pods em resposta a mudanças na carga de trabalho.
+
+- Armazenar o histórico de diferentes versões da aplicação, permitindo voltar para versões estáveis quando necessário.
+
+Exemplo de arquivo yaml:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx-deployment
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-deployment
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: nginx-deployment
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        resources: 
+          limits:
+            cpu: 0.7
+            memory: 256Mi
+          requests:
+            cpu: 0.3
+            memory: 64Mi
+```
+As especificações do deployment são aplicados sobre os labels dos pods (definidos em metadata) definidos em matchLabels.
+
+
+```bash
+kubectl get deployments -l app=nginx-deployment
+kubectl get pods -l app=nginx-deployment
+kubectl describe  deployment -l app=nginx-deployment
+kubectl create deployment --image nginx --replicas 3 nginx-deployment
+kubectl create deployment --image nginx --replicas 3 nginx-deployment --dry-run=client -o yaml > temp.yaml
+
+```
+
+Caso seja necessário atualizar o deployment, como por exemplo a versao da imagem basta dar o comando apply novamente.
+
+### Estrategias de atualização
+
+RollingUpdate:
+  - Atualiza um pod por vez ou um grupo de pods (default). Exemplo de configuração:
+  
+  ```yaml
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 2
+  ```
+Recreate:
+  - Atualiza todos de uma vez.
+
+maxSurge: define a quantidade máxima de Pods que podem ser criados a
+mais durante a atualização (pode ser definido por percentual).
+
+maxUnavailable: define a quantidade máxima de Pods que podem ficar
+indisponíveis durante a atualização, ou seja, durante o processo de
+atualização.
+
+Após dar um apply para acompanhar o processo de deployment execute:
+
+```bash
+kubectl rollout status deployment name-deployment
+```
+Relembre, para veririficar em detalhes sobre os pods:
+
+```bash
+kubectl get pods -o yaml
+```
+
+O kubernetes faz um versionamento dos deployments. Para verificar a lista:
+
+```bash
+kubectl rollout history deployment nginx-deployment
+```
+
+Para ver detalhes de um deployment especifico:
+
+```bash
+kubectl rollout history deployment  name-deployment --revision=number-version
+```
+
+Para retornar o deployment para a versão anterior:
+```bash
+kubectl rollout undo deployment name-deployment
+```
+
+Para uma versao especifica:
+
+```bash
+kubectl rollout undo deployment name-deployment --to-revision=number-version
+```
+
+```bash
+kubectl rollout pause deployment name-deployment
+kubectl rollout resume deployment name-deployment
+kubectl rollout restart deployment nginx-deployment
+```
+
+Após dar o pause as mudanças feitas no deployment não serão
+imediatamente aplicadas. Apenas após dar o resume.
+
+Note que o ao utilizar o undo para voltar a versão ele mantem a
+o numero de replicas de pods. 
+
+Para mudar o numero de replicas via linha de comando:
+
+```bash
+kubectl scale deployment nginx-deployment --replicas=3
+```
+
+### DaemonSet
