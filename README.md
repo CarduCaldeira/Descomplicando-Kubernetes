@@ -276,7 +276,7 @@ kubectl rollout history deployment nginx-deployment
 Para ver detalhes de um deployment especifico:
 
 ```bash
-kubectl rollout history deployment  name-deployment --revision=number-version
+kubectl rollout history deployment  name-deployment --to-revision=number-version
 ```
 
 Para retornar o deployment para a versão anterior:
@@ -309,3 +309,315 @@ kubectl scale deployment nginx-deployment --replicas=3
 ```
 
 ### DaemonSet
+
+Podemos associar um DaemonSet como um deployment que garante a replicação de
+um pod em cada nó. Alguns serviços, como um exporter de métricas, geralmente são necessários em todos os nó. Dessa forma é possível utilizar o DaemonSet que 
+irá garantir a execição do pod no nó (mesmo que adicionados novos nós o DaemonSet irá adicionar automaticamente o pod no nó).
+
+A seguir um exemplo de manifesto que configura um DaemonSet:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      hostNetwork: true
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        ports:
+        - containerPort: 9100
+          hostPort: 9100
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+```
+
+Alguns comandos:
+```yaml
+kubectl get daemonset
+kubectl apply -f name-daemonset-file.yml
+kubectl get pods -l app=tag-daemonset
+kubectl describe daemonset name-daemonset
+```
+
+### Probes
+
+Para verificar a saude de um container no pod o Kubernetes
+fornece o uso de probes:
+
+- livenessProbe: Verifica se o contêiner está em execução.
+Se a verificação falhar, o container é reinicializado.
+
+- readinessProbe: Verificar se o seu container está pronto para receber tráfego, caso falhe o service do Kubernetes irá ignorar o endpoint do container até que ele volte a passar no teste (por exemplo se houver um LoadBalancer nenhuma requisição será redirecionada para esse endpoint). 
+
+- startupProbe: Verifica se o contêiner foi iniciado com sucesso. Se a verificação falhar, o contêiner será reiniciado. Similar ao livenessProbe porém tem grande aplicação em situações que o container demora a ser iniciado.
+
+No exemplo abaixo podemos visualizar um deployment com probes:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx-deployment
+  name: nginx-deployment
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: nginx-deployment
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: nginx-deployment
+    spec:
+      containers:
+      - image: nginx:1.19.2
+        name: nginx
+        resources:
+          limits:
+            cpu: "0.5"
+            memory: 256Mi
+          requests:
+            cpu: 0.25
+            memory: 128Mi
+        livenessProbe:
+          exec:
+            command:
+              - curl
+              - -f
+              - http://localhost:80/
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+```
+
+Note o uso de três formas de verificação das probes:
+
+- httpGet: Envia uma solicitação HTTP/ para um endpoint.
+- Exec: Executa um comando no contêiner. Retorno de código 0 indica sucesso.
+- tcpSocket: Tenta abrir uma conexão TCP em uma porta específica. Sucesso se a conexão puder ser estabelecida.
+
+Por exemplo, se um teste de readinessProbe falhar (como a estategia de atualização é RollingUpdate) a atualização
+ira ficar no primeiro pod.
+
+![teste](./assets/probe-test.png)
+
+### Configurando um Cluster na AWS (não gerenciado)
+
+#### Requisitos 
+
+- Linux
+- 2GB ou mais de RAM
+- 2 CPUS ou mais
+- Conexão de rede entre todas os nodes no cluster (pode ser via rede pública ou privada).
+
+As seguintes portas devem estar disponiveis:
+
+  - 6443: Porta utilizada pelo Kubernetes API Server.
+  - 10250-10255: Essas portas são usadas pelo kubelet para se comunicar com o control plane do Kubernetes. A porta 10250 é usada para comunicação de leitura/gravação e a porta 10255 é usada apenas para comunicação de leitura.
+  - 30000-32767: Essas portas são usadas para serviços NodePort que precisam ser acessíveis fora do cluster. O Kubernetes aloca uma porta aleatória dentro desse intervalo para cada serviço NodePort e redireciona o tráfego para o pod correspondente.
+  - 2379-2380: Essas portas são usadas pelo etcd, o banco de dados de chave-valor distribuído usado pelo control plane do Kubernetes. A porta 2379 é usada para comunicação de leitura/gravação e a porta 2380 é usada apenas para comunicação de eleição.
+
+#### Configuração do ambiente na AWS (não gerenciado)
+
+Crie três instancias EC2 do tipo t2.medium com ubuntu 22.04. Crie uma chave ssh e configure o security group para liberar as portas necessárias conforme a imagem abaixo (para esse exemplo use as configurações padrões de storage e rede). 
+
+![teste](./assets/security-conf.png)
+
+Nesse exemplo não é necessário liberar  as portas 2379-2380 pois será configurado apenas
+um plane control (e portanto nao será necessário a comunicação entre planes controls), também nenhum serviço será exposto usando o NodePort (portas 30000-32767).
+
+A liberação das portas 6783 e 6784 é devido ao uso do Weave Net. O Kubernetes não lida as implementações de rede entre os nós, devido a isso é necessário o uso do Weave Net.
+
+Acesse via ssh as três instancias. Após isso rode em cada vm:
+
+```bash
+sudo su -
+hostnamectl hostname k8s-<number>
+exit
+bash
+```
+
+**Dica**: Use o tmux no terminal para facilitar a configuração das três VM's simultaneamente (para criar uma aba lateral ctrl + b e execute %, para criar uma aba no sentido vertical ctrl + b e execute "). Após isso sincronize os terminais com ctrl + b e : e setw synchronize-panes:
+
+![teste](./assets/tmux-conf.png)
+
+#### Preparando o ambiente
+
+Para instalar o Kubenetes (kubeadm) antes é necessário preparar as instancias para seu uso e instalção. Execute em todas elas: 
+
+```bash
+sudo swapoff -a
+
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+sudo sysctl --system
+```
+
+Adicionar os modulos em /etc/modules-load.d/k8s.conf garante que esses módulos sejam carregados no incio. Para nao precisar reiniciar o sistema foi utilizado o modprobe.
+
+#### Instalando os pacotes do Kubernetes
+
+Para instalar execute:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+
+sudo systemctl enable --now kubelet
+```
+
+Para verificar a documentação de instalação
+https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/. 
+
+O comando apt-mark hold "trava" atualizaçoes nos pacotes especificados. Já o comando systemctl enable --now
+habilita o serviço kubelet para que ele inicie automaticamente quando o sistema for iniciado.
+
+#### Instalação do containerd
+
+```bash
+
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update && sudo apt-get install -y containerd.io
+
+sudo containerd config default | sudo tee /etc/containerd/config.toml
+
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+
+sudo systemctl restart containerd
+sudo systemctl status containerd
+```
+
+#### Configurando o Kubectl
+
+Apenas no control plane verifique o ip da instancia com
+
+```bash
+ip a
+```
+
+![teste](./assets/ip.png)
+
+Supondo que seja 172.31.37.82 execute na VM do control plane
+
+```bash
+sudo kubeadm init --pod-network-cidr=10.10.0.0/16 --apiserver-advertise-address=172.31.37.82
+```
+
+![teste](./assets/kube-init.png)
+
+Note que após a execução desse comando será gerado um token como na forma:
+
+```bash
+kubeadm join 172.31.37.82:6443 --token fmr5ta.bwpfj6k6xw65bvl8 \
+        --discovery-token-ca-cert-hash \ sha256:4fd0b50e02b1644ef7cf6f3b3e5b60c5898148fbe2dfec90fbbc9e1a4ae07672
+```
+
+Salve esse comando (ele deverá ser executado nas vms configuradas como workers nodes).
+Para executar o Kubectl execute:
+
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Após isso é possível utilizar o kubectl. Note que ao executar kubectl get nodes
+o Control Plane aparece  como NotReady.
+
+Essa configuração é necessária para que o kubectl possa se comunicar com o cluster. O arquivo admin.conf contém informações de acesso ao cluster, como o endereço do servidor API, o certificado de cliente e o token de autenticação.
+
+Eu posso ter mais de um contexto dentro do arquivo admin.conf, onde cada contexto é um cluster Kubernetes. Por exemplo, eu posso ter um contexto para o cluster de produção e outro para o cluster de desenvolvimento.
+
+Ele contém os dados de acesso ao cluster, portanto, se alguém tiver acesso a esse arquivo, ele terá acesso ao cluster. (Desde que tenha acesso ao cluster, claro).
+
+O arquivo admin.conf é criado quando o cluster é inicializado.
+
+![teste](./assets/not-ready-plane.png)
+
+#### Adicionando os workers nodes no cluster
+
+Em cada VM o comando salvo anteriormente no modo sudo
+
+```bash
+sudo kubeadm join 172.31.37.82:6443 --token fmr5ta.bwpfj6k6xw65bvl8 \
+        --discovery-token-ca-cert-hash \ sha256:4fd0b50e02b1644ef7cf6f3b3e5b60c5898148fbe2dfec90fbbc9e1a4ae07672
+```
+Após isso note que ao dar o comando kubectl get nodes no control plane aparece as workers nodes como Not Ready. 
+
+![teste](./assets/add-workers.png)
+
+Por ultimo no control plane execute
+
+```bash
+kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+```
+
+Isso irá executar o DaemonSet do Wave Net. Após isso:
+
+![teste](./assets/cluster-config.png)
+
